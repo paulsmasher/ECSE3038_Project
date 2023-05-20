@@ -47,14 +47,40 @@ data_col = db['data']
 geolocator = Nominatim(user_agent="MyApp")
 location = geolocator.geocode("Hyderabad")
 
+
+
+regex = re.compile(r'((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?')
+
+def parse_time(time_str):
+    parts = regex.match(time_str)
+    if not parts:
+        return
+    parts = parts.groupdict()
+    time_params = {}
+    for name, param in parts.items():
+        if param:
+            time_params[name] = int(param)
+    return timedelta(**time_params)
+
+async def update_sensor_data(sensor_readings_col, output):
+    # update the database with the new sensor data
+    obj = await sensor_readings_col.find().sort('_id', -1).limit(1).to_list(1)
+    if obj:
+        await sensor_readings_col.update_one({"_id": obj[0]["_id"]}, {"$set": output})
+        new_obj = await sensor_readings_col.find_one({"_id": obj[0]["_id"]})
+    else:
+        new = await sensor_readings_col.insert_one(output)
+        new_obj = await sensor_readings_col.find_one({"_id": new.inserted_id})
+    return new_obj
+
 def get_sunset_time():
     user_latitude = location.latitude
     user_longitude = location.longitude
     sunset_api_endpoint = f'https://api.sunrise-sunset.org/json?lat={user_latitude}&lng={user_longitude}'
     sunset_api_response = requests.get(sunset_api_endpoint)
     sunset_api_data = sunset_api_response.json()
-    sunset_time = datetime.datetime.strptime(sunset_api_data['results']['sunset'], '%I:%M:%S %p').time()
-    return datetime.datetime.strptime(str(sunset_time),"%H:%M:%S")
+    sunset_time = datetime.strptime(sunset_api_data['results']['sunset'], '%I:%M:%S %p').time()
+    return datetime.strptime(str(sunset_time),"%H:%M:%S") + parse_time("5h")
 
 @app.get('/graph')
 async def get_graph(request: Request):
@@ -75,6 +101,7 @@ async def get_graph(request: Request):
     return data_reading
 
 sensor_readings_col: Collection
+
 @app.put('/settings')
 async def update_sensor_readings(request: Request):
     state = await request.json()
@@ -82,28 +109,12 @@ async def update_sensor_readings(request: Request):
     user_light = state["user_light"]
     light_time_off = state["light_duration"]
 
-    # Define the parse_time function
-    def parse_time(time_str):
-        hours, minutes, seconds = map(int, time_str.split(':'))
-        return timedelta(hours=hours, minutes=minutes, seconds=seconds)
-
-    # Define the update_sensor_data function
-    async def update_sensor_data(sensor_readings_col, output):
-        # update the database with the new sensor data
-        obj = await sensor_readings_col.find().sort('_id', -1).limit(1).to_list(1)
-        if obj:
-            await sensor_readings_col.update_one({"_id": obj[0]["_id"]}, {"$set": output})
-            new_obj = await sensor_readings_col.find_one({"_id": obj[0]["_id"]})
-        else:
-            new = await sensor_readings_col.insert_one(output)
-            new_obj = await sensor_readings_col.find_one({"_id": new.inserted_id})
-        return new_obj
-
     # calculate the light-off time based on theuser input
     if user_light == "sunset":
         user_light_scr = get_sunset_time()
     else:
-        user_light_scr = datetime.datetime.strptime(user_light, "%H:%M:%S")
+        user_light_scr = datetime.strptime(user_light, "%H:%M:%S")
+        
     new_user_light = user_light_scr + parse_time(light_time_off)
 
     # create a dictionary with the output values
@@ -118,7 +129,7 @@ async def update_sensor_readings(request: Request):
 
     return new_obj
 
-@app.put("/temperature")
+@app.post("/temperature")
 async def update_temperature(request: Request):
     condition = await request.json()
 
@@ -157,6 +168,6 @@ async def get_state():
            "presence": False,
            "fan": False,
            "light": False,
-           "current_time": datetime.datetime.now()
+           "current_time": datetime.now()
        }
    return last_reading[0]
