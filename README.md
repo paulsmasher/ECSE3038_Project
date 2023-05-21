@@ -1,5 +1,5 @@
 # Simple Smart Hub
-
+ it
 ## Introduction
 
 IoT stands for Internet of Things, and it refers to the network of physical objects or "things" that are connected to the internet and can communicate with each other to perform certain tasks.
